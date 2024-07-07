@@ -1,0 +1,7 @@
+gradio
+transformers
+requests
+beautifulsoup4
+scikit-learn
+torch
+pandas
