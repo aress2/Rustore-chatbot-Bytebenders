@@ -6,6 +6,7 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 from urllib.parse import urljoin
 import torch
+import pandas as pd
 
 # Проверка доступности CUDA
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -16,7 +17,7 @@ qa_model_name = "DeepPavlov/rubert-base-cased-conversational"
 qa_tokenizer = AutoTokenizer.from_pretrained(qa_model_name)
 qa_model = AutoModelForQuestionAnswering.from_pretrained(qa_model_name).to(device)
 
-code_model_name = "microsoft/codebert-base"  # Пример модели для работы с кодом
+code_model_name = "DeepPavlov/rubert-base-cased-conversational"
 code_tokenizer = AutoTokenizer.from_pretrained(code_model_name)
 code_model = AutoModelForCausalLM.from_pretrained(code_model_name).to(device)
 
@@ -167,20 +168,30 @@ def fix_code(code):
 
 # Новая функция для генерации кода на Kotlin
 def generate_kotlin_code(query):
-    url = "https://www.codeconvert.ai/kotlin-code-generator"
-    try:
-        response = requests.get(url, params={"query": query})
-        soup = BeautifulSoup(response.content, 'html.parser')
-        pre_tag = soup.find('pre')
-        if pre_tag:
-            code = pre_tag.text
-        else:
-            code = "Не удалось найти сгенерированный код."
-    except Exception as e:
-        code = f"Ошибка при получении кода: {str(e)}"
+    # Используем модель DeepSeek-Coder-V2-Lite-Base для генерации кода на языке Kotlin
+    code_model_name = "DeepPavlov/rubert-base-cased-conversational"
+    code_tokenizer = AutoTokenizer.from_pretrained(code_model_name)
+    code_model = AutoModelForCausalLM.from_pretrained(code_model_name).to(device)
+
+    inputs = code_tokenizer(query, return_tensors="pt", truncation=True, max_length=512)
+    inputs = {k: v.to(device) for k, v in inputs.items()} # Перемещаем входные данные на GPU
+
+    with torch.no_grad():
+        outputs = code_model.generate(**inputs, max_length=512, num_return_sequences=1, temperature=0.7)
+
+    generated_code = code_tokenizer.decode(outputs[0], skip_special_tokens=True)
+    return generated_code
     return code
 
-# Интерфейс Gradio
+# Загрузка данных из файла CSV
+data = pd.read_csv('googleplaystore.csv')
+
+# Функция для вычисления среднего рейтинга по категории Genres
+def calculate_average_rating_by_genre():
+    average_rating_by_genre = data.groupby('Genres')['Rating'].mean().reset_index()
+    return average_rating_by_genre
+
+# Новая функция для интерфейса Gradio, теперь с рейтингом по категориям Genres
 def gradio_interface(query, mode):
     if mode == "Генерация кода на Kotlin":
         code = generate_kotlin_code(query)
@@ -191,15 +202,18 @@ def gradio_interface(query, mode):
     elif mode == "Исправление кода":
         fixed_code = fix_code(query)
         return fixed_code, "Код исправлен"
+    elif mode == "Рейтинг по категориям Genres":  # Новый режим
+        average_rating = calculate_average_rating_by_genre()
+        return str(average_rating), "Средний рейтинг по категориям Genres"
 
 iface = gr.Interface(
     fn=gradio_interface,
     inputs=[
         gr.Textbox(lines=5, placeholder="Введите ваш запрос или код здесь..."),
-        gr.Radio(["Генерация кода на Kotlin", "Поиск по сайтам", "Исправление кода"], label="Режим работы")
+        gr.Radio(["Генерация кода на Kotlin", "Поиск по сайтам", "Исправление кода", "Рейтинг по категориям Genres"], label="Режим работы")  # Добавлен новый режим
     ],
     outputs=["text", "text"],
     title="Помощник по разработке мобильных приложений для RuStore",
-    description="Задайте вопрос о разработке мобильных приложений для RuStore, введите код для исправления или запросите генерацию кода на Kotlin"
+    description="Задайте вопрос о разработке мобильных приложений для RuStore, введите код для исправления, запросите генерацию кода на Kotlin или проверьте рейтинг по категориям Genres"
 )
 iface.launch()
